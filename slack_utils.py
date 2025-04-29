@@ -57,6 +57,7 @@ def verify_slack_request():
 
 def send_message_to_slack(channel, text, blocks=None):
     """슬랙 채널에 메시지 전송"""
+    print('메시지전송')
     if not SLACK_BOT_TOKEN:
         print("경고: SLACK_BOT_TOKEN이 설정되지 않았습니다.")
         return {"ok": False, "error": "토큰이 설정되지 않았습니다."}
@@ -72,11 +73,14 @@ def send_message_to_slack(channel, text, blocks=None):
         'text': text
     }
     
+    print('블록전')
     if blocks:
         payload['blocks'] = blocks
     
     try:
+        print("메시지 보내기 트라이")
         response = requests.post(url, json=payload, headers=headers)
+        print('결과리턴')
         return response.json()
     except Exception as e:
         print(f"슬랙 메시지 전송 중 오류 발생: {e}")
