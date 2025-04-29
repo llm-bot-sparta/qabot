@@ -80,7 +80,7 @@ def send_message_to_slack(channel, text, blocks=None):
     try:
         print("메시지 보내기 트라이")
         response = requests.post(url, json=payload, headers=headers)
-        print('결과리턴')
+        print(response)
         return response.json()
     except Exception as e:
         print(f"슬랙 메시지 전송 중 오류 발생: {e}")

@@ -91,8 +91,15 @@ def slack_command():
             # 새 메시지로 결과 게시 (실제로는 initial_response를 업데이트하는 것이 더 좋음)
             # 그러나 이 예시에서는 간단하게 처리합니다
             print('sendtomessagetoslack')
-            send_message_to_slack(channel_id, message)
-            
+            slack_response = send_message_to_slack(channel_id, message)
+            if not slack_response.get('ok', False):
+                error_message = f"슬랙 메시지 전송 실패: {slack_response.get('error', '알 수 없는 오류')}"
+                print(error_message)
+                return jsonify({
+                    "response_type": "ephemeral",
+                    "text": error_message
+                })
+
             # 클라이언트에게 빠른 응답
             return jsonify(initial_response)
         except Exception as e:
