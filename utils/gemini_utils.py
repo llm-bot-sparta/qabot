@@ -20,27 +20,32 @@ def setup_gemini():
     return True
 
 # Gemini에 질문하기
-def ask_gemini(prompt, model_name="gemini-1.5-flash"):
-    """Gemini 모델에 질문하고 응답 받기
-    
-    Args:
-        prompt (str): 사용자의 질문/프롬프트
-        model_name (str): 사용할 Gemini 모델명
-    
-    Returns:
-        str: Gemini 모델의 응답 텍스트
-    """
+def ask_gemini(
+    prompt,
+    model_name="gemini-1.5-flash",
+    system_prompt=(
+        "정답을 직접적으로 알려주지 말고, 사용자가 스스로 답을 찾을 수 있도록 "
+        "다음 템플릿에 맞춰 작성해 주세요.\n\n"
+        "답변: (답변 작성)\n"
+        "관련 개념: (개념1), (개념2), (개념3), (개념4), (개념5)\n"
+        "예시: \n\n"
+        "관련 개념이 5개 미만이면 빈 칸은 생략해도 됩니다.\n"
+        "예시에서는 Python/SQL 질문이면 파이썬 코드와 SQL 코드를 주고, 실무적 질문이면 그 활용의 예시를 주세요."
+    )
+):
+    """Gemini 모델에 질문하고 응답 받기"""
     print('ask_gemini발동')
+    if system_prompt:
+        prompt = system_prompt + prompt
     if DEV_MODE_GEMINI:
         print(f"개발 모드: 가짜 Gemini 응답 반환. 받은 프롬프트: {prompt}")
         return f"[개발 모드] 프롬프트 '{prompt}'에 대한 가짜 응답입니다. Gemini API 키를 설정하면 실제 응답을 받을 수 있습니다."
-    
     try:
         # 모델 설정
         print('모델설정시작')
         model = genai.GenerativeModel(model_name)
         print('모델설정완료')
-        # 응답 생성
+        # 응답 생성 
         response = model.generate_content(prompt)
         print('응답생성')
         # 응답 텍스트 반환

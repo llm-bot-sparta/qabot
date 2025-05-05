@@ -2,11 +2,38 @@
 from flask import Flask, request, jsonify, abort
 import os
 # 슬랙 유틸리티 함수 임포트
-from slack_utils import verify_slack_request, send_message_to_slack
+from utils.slack_utils import verify_slack_request, send_message_to_slack, add_reaction_to_message, get_thread_messages
 # Gemini 유틸리티 함수 임포트
-from gemini_utils import ask_gemini, DEV_MODE_GEMINI
+from utils.gemini_utils import ask_gemini, DEV_MODE_GEMINI
 
 app = Flask(__name__)
+
+SYSTEM_PROMPT = (
+    "정답을 직접적으로 알려주지 말고, 사용자가 스스로 답을 찾을 수 있도록 "
+    "아주 간단한 답변(50자 이내)과 관련 개념 최대 5개를 다음 템플릿에 맞춰 작성해 주세요.\n\n"
+    "간단한 답변: (답변 작성)\n"
+    "관련 개념: (개념1), (개념2), (개념3), (개념4), (개념5)\n"
+    "관련 개념이 5개 미만이면 빈 칸은 생략해도 됩니다.\n"
+)
+
+QUESTION_PROMPT = """
+질문에 답변할 때 다음 지침을 따라주세요:
+
+1. 답변 형식:
+   - 간결하고 명확하게 정보를 제공하세요(최대 3-4 단락).
+   - 질문의 핵심에 집중하고 군더더기 없이 답변하세요.
+   - 학생 수준에 적합한 언어를 사용하세요.
+
+2. 구조화된 답변:
+   - 질문에 대한 직접적인 답변으로 시작하세요.
+   - 실무 현장에서의 구체적인 예시를 1-2개 포함하세요.
+   - 관련된 추가 자료나 참고 링크가 있다면 마지막에 제공하세요.
+
+3. 코드 관련 질문:
+   - 실행 가능한 코드 템플릿을 제공하세요.
+   - 코드의 주요 부분에 주석을 달아 설명하세요.
+   - 코드 실행 시 발생할 수 있는 일반적인 오류와 해결책을 간략히 언급하세요.
+"""
 
 @app.route('/', methods=['GET'])
 def index():
@@ -64,44 +91,101 @@ def slack_command():
     
     # 명령어에 따라 다른 응답 제공
     if command == '/질문':
-        # 입력이 없는 경우 도움말 제공
         if not text:
             return jsonify({
-                "response_type": "ephemeral",  # 사용자에게만 표시
+                "response_type": "ephemeral",
                 "text": "질문을 입력해주세요. 예: `/질문 파이썬으로 Hello World 코드를 작성해줘`"
             })
-        
-        # 즉시 응답 (3초 내에 응답해야 함)
-        initial_response = {
-            "response_type": "in_channel",
-            "text": f"<@{user_id}>님의 질문: {text}\n\n처리 중입니다... ⏳"
-        }
-        
-        # 백그라운드에서 Gemini API 호출하고 결과 게시 (비동기 처리가 이상적이지만 간단한 예시)
-        # Flask의 특성상 여기서는 간단하게 구현합니다
         try:
-            # Gemini에 질문하기
-            print('ask')
-            answer = ask_gemini(text)
-            
-            # 슬랙 메시지 형식 준비
-            print('messag준비')
-            message = f"<@{user_id}>님의 질문: {text}\n\n{answer}"
-            
-            # 새 메시지로 결과 게시 (실제로는 initial_response를 업데이트하는 것이 더 좋음)
-            # 그러나 이 예시에서는 간단하게 처리합니다
-            print('sendtomessagetoslack')
-            slack_response = send_message_to_slack(channel_id, message)
-            if not slack_response.get('ok', False):
-                error_message = f"슬랙 메시지 전송 실패: {slack_response.get('error', '알 수 없는 오류')}"
+            question_message = f":question: <@{user_id}>님의 질문입니다:\n>{text}"
+            question_response = send_message_to_slack(channel_id, question_message)
+            if not question_response.get('ok', False):
+                error_message = f"슬랙 메시지 전송 실패: {question_response.get('error', '알 수 없는 오류')}"
                 print(error_message)
                 return jsonify({
                     "response_type": "ephemeral",
                     "text": error_message
                 })
 
-            # 클라이언트에게 빠른 응답
-            return jsonify(initial_response)
+            parent_ts = question_response.get('ts')
+            if not parent_ts:
+                error_message = "슬랙 메시지 ts를 가져오지 못했습니다."
+                print(error_message)
+                return jsonify({
+                    "response_type": "ephemeral",
+                    "text": error_message
+                })
+
+            # Gemini에 질문하기 (질문 프롬프트 적용)
+            answer = ask_gemini(QUESTION_PROMPT + "\n" + text)
+
+            # 답변을 스레드로 전송
+            answer_response = send_message_to_slack(
+                channel_id,
+                answer,
+                thread_ts=parent_ts
+            )
+            if not answer_response.get('ok', False):
+                error_message = f"슬랙 답변 전송 실패: {answer_response.get('error', '알 수 없는 오류')}"
+                print(error_message)
+                return jsonify({
+                    "response_type": "ephemeral",
+                    "text": error_message
+                })
+
+            return '', 200
+        except Exception as e:
+            error_message = f"오류가 발생했습니다: {str(e)}"
+            print(error_message)
+            return jsonify({
+                "response_type": "ephemeral",
+                "text": error_message
+            })
+    
+    elif command == '/힌트':
+        if not text:
+            return jsonify({
+                "response_type": "ephemeral",
+                "text": "질문을 입력해주세요. 예: `/힌트 파이썬으로 Hello World 코드를 작성해줘`"
+            })
+        try:
+            question_message = f":question: <@{user_id}>님의 질문입니다:\n>{text}"
+            question_response = send_message_to_slack(channel_id, question_message)
+            if not question_response.get('ok', False):
+                error_message = f"슬랙 메시지 전송 실패: {question_response.get('error', '알 수 없는 오류')}"
+                print(error_message)
+                return jsonify({
+                    "response_type": "ephemeral",
+                    "text": error_message
+                })
+
+            parent_ts = question_response.get('ts')
+            if not parent_ts:
+                error_message = "슬랙 메시지 ts를 가져오지 못했습니다."
+                print(error_message)
+                return jsonify({
+                    "response_type": "ephemeral",
+                    "text": error_message
+                })
+
+            # Gemini에 질문하기 (힌트 프롬프트 적용)
+            answer = ask_gemini(SYSTEM_PROMPT + text)
+
+            # 답변을 스레드로 전송
+            answer_response = send_message_to_slack(
+                channel_id,
+                answer,
+                thread_ts=parent_ts
+            )
+            if not answer_response.get('ok', False):
+                error_message = f"슬랙 답변 전송 실패: {answer_response.get('error', '알 수 없는 오류')}"
+                print(error_message)
+                return jsonify({
+                    "response_type": "ephemeral",
+                    "text": error_message
+                })
+
+            return '', 200
         except Exception as e:
             error_message = f"오류가 발생했습니다: {str(e)}"
             print(error_message)
@@ -128,7 +212,10 @@ def slack_command():
             "text": "사용 가능한 명령어 목록:",
             "attachments": [
                 {
-                    "text": "• `/ask [질문]` - Gemini AI에게 질문하기\n• `/테스트 [텍스트]` - 테스트 명령어 실행\n• `/help` - 도움말 표시"
+                    "text": "• `/질문 [질문]` - Gemini AI에게 구조화된 답변 받기\n"
+                            "• `/힌트 [질문]` - Gemini AI에게 힌트/키워드 받기\n"
+                            "• `/테스트 [텍스트]` - 테스트 명령어 실행\n"
+                            "• `/help` - 도움말 표시"
                 }
             ]
         }
@@ -146,6 +233,52 @@ def slack_command():
             ]
         }
         return jsonify(response)
+
+#이벤트 처리 라우트(미완성)
+@app.route('/slack/events', methods=['POST'])
+def slack_events():
+    data = request.json
+
+    # 슬랙 URL 검증용 challenge 응답
+    if data.get('type') == 'url_verification':
+        return jsonify({'challenge': data['challenge']})
+
+    # 실제 이벤트 처리
+    event = data.get('event', {})
+    # 스레드 내 새 메시지 감지 (봇이 보낸 메시지는 무시)
+    if event.get('type') == 'message' and event.get('thread_ts') and not event.get('bot_id'):
+        channel_id = event['channel']
+        user_id = event['user']
+        text = event['text']
+        thread_ts = event['thread_ts']
+
+        # 1. 스레드의 모든 메시지 불러오기
+        messages = get_thread_messages(channel_id, thread_ts)
+        # 2. 대화 이력 정리 (질문, 답변, 추가질문 등)
+        history = []
+        for msg in messages:
+            user = msg.get('user', 'user')
+            msg_text = msg.get('text', '')
+            # 봇 메시지와 사용자 메시지 구분
+            if msg.get('bot_id'):
+                history.append(f"[봇 답변]: {msg_text}")
+            else:
+                history.append(f"[{user}]: {msg_text}")
+
+        # 3. CoT 프롬프트 생성
+        cot_prompt = (
+            "아래는 지금까지의 대화 이력입니다.\n"
+            + "\n".join(history)
+            + "\n\n마지막 사용자의 메시지에 대해 "
+            "아주 간단한 답변(50자 이내)과 관련 개념 최대 5개를 다음 템플릿에 맞춰 작성해 주세요.\n\n"
+            "간단한 답변: (답변 작성)\n"
+            "관련 개념: (개념1), (개념2), (개념3), (개념4), (개념5)\n"
+            "관련 개념이 5개 미만이면 빈 칸은 생략해도 됩니다.\n"
+        )
+        answer = ask_gemini(cot_prompt)
+        send_message_to_slack(channel_id, answer, thread_ts=thread_ts)
+
+    return '', 200
 
 if __name__ == '__main__':
     # 개발 모드 확인

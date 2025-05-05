@@ -55,7 +55,7 @@ def verify_slack_request():
         print("오류: 슬랙 서명이 일치하지 않습니다.")
     return is_valid
 
-def send_message_to_slack(channel, text, blocks=None):
+def send_message_to_slack(channel, text, blocks=None, thread_ts=None):
     """슬랙 채널에 메시지 전송"""
     print('메시지전송')
     if not SLACK_BOT_TOKEN:
@@ -72,6 +72,8 @@ def send_message_to_slack(channel, text, blocks=None):
         'channel': channel,
         'text': text
     }
+    if thread_ts:
+        payload['thread_ts'] = thread_ts
     
     print('블록전')
     if blocks:
@@ -85,3 +87,45 @@ def send_message_to_slack(channel, text, blocks=None):
     except Exception as e:
         print(f"슬랙 메시지 전송 중 오류 발생: {e}")
         return {"ok": False, "error": str(e)}
+
+def add_reaction_to_message(channel, timestamp, emoji):
+    """메시지에 이모지(리액션) 추가"""
+    url = 'https://slack.com/api/reactions.add'
+    headers = {
+        'Authorization': f'Bearer {SLACK_BOT_TOKEN}',
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        'channel': channel,
+        'timestamp': timestamp,
+        'name': emoji  # 예: 'white_check_mark'
+    }
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        return response.json()
+    except Exception as e:
+        print(f"이모지 추가 중 오류 발생: {e}")
+        return {"ok": False, "error": str(e)}
+
+def get_thread_messages(channel, thread_ts):
+    """특정 스레드의 모든 메시지(질문, 답변, 추가질문 등)를 가져옴"""
+    url = 'https://slack.com/api/conversations.replies'
+    headers = {
+        'Authorization': f'Bearer {SLACK_BOT_TOKEN}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    params = {
+        'channel': channel,
+        'ts': thread_ts
+    }
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        data = response.json()
+        if data.get('ok'):
+            return data.get('messages', [])
+        else:
+            print(f"스레드 메시지 조회 실패: {data.get('error')}")
+            return []
+    except Exception as e:
+        print(f"스레드 메시지 조회 중 오류 발생: {e}")
+        return []
